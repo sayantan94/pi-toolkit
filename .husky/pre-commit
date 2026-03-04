@@ -3,11 +3,19 @@
 # Get list of staged files before running check
 STAGED_FILES=$(git diff --cached --name-only)
 
-# Run the check script (formatting, linting, and type checking)
+# Run biome (formatting + linting) and tsgo (type checking) directly.
+# We skip web-ui's tsc check here because it requires a prior build of
+# dependent packages, which is not guaranteed in a pre-commit context.
 echo "Running formatting, linting, and type checking..."
-npm run check
+npx @biomejs/biome check --write --error-on-warnings .
 if [ $? -ne 0 ]; then
-  echo "❌ Checks failed. Please fix the errors before committing."
+  echo "❌ Biome checks failed. Please fix the errors before committing."
+  exit 1
+fi
+
+npx tsgo --noEmit
+if [ $? -ne 0 ]; then
+  echo "❌ Type checking failed. Please fix the errors before committing."
   exit 1
 fi
 

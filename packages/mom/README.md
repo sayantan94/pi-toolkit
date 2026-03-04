@@ -73,8 +73,14 @@ docker run -d \
   alpine:latest \
   tail -f /dev/null
 
-# Run mom in Docker mode
+# Run mom in Docker mode (defaults to Anthropic Claude Sonnet 4.5)
 mom --sandbox=docker:mom-sandbox ./data
+
+# Run with Amazon Bedrock
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_REGION=us-east-1
+mom --provider=amazon-bedrock --model=us.anthropic.claude-sonnet-4-6 --sandbox=docker:mom-sandbox ./data
 
 # Mom will install any tools she needs herself (git, jq, etc.)
 ```
@@ -87,6 +93,8 @@ mom [options] <working-directory>
 Options:
   --sandbox=host              Run tools on host (not recommended)
   --sandbox=docker:<name>     Run tools in Docker container (recommended)
+  --provider=<name>           AI provider (default: anthropic)
+  --model=<id>                Model ID (default: claude-sonnet-4-5)
 ```
 
 ## Environment Variables
@@ -96,10 +104,17 @@ Options:
 | `MOM_SLACK_APP_TOKEN` | Slack app-level token (xapp-...) |
 | `MOM_SLACK_BOT_TOKEN` | Slack bot token (xoxb-...) |
 | `ANTHROPIC_API_KEY` | (Optional) Anthropic API key |
+| `MOM_PROVIDER` | (Optional) AI provider, overridden by `--provider` CLI arg |
+| `MOM_MODEL` | (Optional) Model ID, overridden by `--model` CLI arg |
+| `AWS_ACCESS_KEY_ID` | (Optional) AWS access key for Bedrock |
+| `AWS_SECRET_ACCESS_KEY` | (Optional) AWS secret key for Bedrock |
+| `AWS_REGION` | (Optional) AWS region for Bedrock (e.g., `us-east-1`) |
 
 ## Authentication
 
-Mom needs credentials for Anthropic API. The options to set it are:
+Mom needs API credentials for the configured provider. The provider is set via `--provider` CLI arg, `MOM_PROVIDER` env var, or defaults to `anthropic`.
+
+### Anthropic (default)
 
 1. **Environment Variable**
 ```bash
@@ -113,6 +128,18 @@ export ANTHROPIC_API_KEY=sk-ant-...
   - choose "Anthropic" provider
   - follow instructions in the browser
 - link `auth.json` to mom: `ln -s ~/.pi/agent/auth.json ~/.pi/mom/auth.json`
+
+### Amazon Bedrock
+
+Set AWS credentials via environment variables:
+```bash
+export AWS_ACCESS_KEY_ID=AKIA...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_REGION=us-east-1
+mom --provider=amazon-bedrock --model=us.anthropic.claude-sonnet-4-6 --sandbox=docker:mom-sandbox ./data
+```
+
+Standard AWS credential resolution is supported (env vars, `~/.aws/credentials`, instance profiles, etc.).
 
 ## How Mom Works
 

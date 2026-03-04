@@ -23,9 +23,6 @@ import type { ChannelInfo, SlackContext, UserInfo } from "./slack.js";
 import type { ChannelStore } from "./store.js";
 import { createMomTools, setUploadFunction } from "./tools/index.js";
 
-// Hardcoded model for now - TODO: make configurable (issue #63)
-const model = getModel("anthropic", "claude-sonnet-4-5");
-
 export interface PendingMessage {
 	userName: string;
 	text: string;
@@ -40,18 +37,6 @@ export interface AgentRunner {
 		pendingMessages?: PendingMessage[],
 	): Promise<{ stopReason: string; errorMessage?: string }>;
 	abort(): void;
-}
-
-async function getAnthropicApiKey(authStorage: AuthStorage): Promise<string> {
-	const key = await authStorage.getApiKey("anthropic");
-	if (!key) {
-		throw new Error(
-			"No API key found for anthropic.\n\n" +
-				"Set an API key environment variable, or use /login with Anthropic and link to auth.json from " +
-				join(homedir(), ".pi", "mom", "auth.json"),
-		);
-	}
-	return key;
 }
 
 const IMAGE_MIME_TYPES: Record<string, string> = {
@@ -395,11 +380,17 @@ const channelRunners = new Map<string, AgentRunner>();
  * Get or create an AgentRunner for a channel.
  * Runners are cached - one per channel, persistent across messages.
  */
-export function getOrCreateRunner(sandboxConfig: SandboxConfig, channelId: string, channelDir: string): AgentRunner {
+export function getOrCreateRunner(
+	sandboxConfig: SandboxConfig,
+	channelId: string,
+	channelDir: string,
+	provider: string,
+	modelId: string,
+): AgentRunner {
 	const existing = channelRunners.get(channelId);
 	if (existing) return existing;
 
-	const runner = createRunner(sandboxConfig, channelId, channelDir);
+	const runner = createRunner(sandboxConfig, channelId, channelDir, provider, modelId);
 	channelRunners.set(channelId, runner);
 	return runner;
 }
@@ -408,9 +399,21 @@ export function getOrCreateRunner(sandboxConfig: SandboxConfig, channelId: strin
  * Create a new AgentRunner for a channel.
  * Sets up the session and subscribes to events once.
  */
-function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDir: string): AgentRunner {
+function createRunner(
+	sandboxConfig: SandboxConfig,
+	channelId: string,
+	channelDir: string,
+	provider: string,
+	modelId: string,
+): AgentRunner {
 	const executor = createExecutor(sandboxConfig);
 	const workspacePath = executor.getWorkspacePath(channelDir.replace(`/${channelId}`, ""));
+
+	// Resolve model from provider/modelId (cast needed for dynamic CLI args)
+	const model = (getModel as (p: string, m: string) => ReturnType<typeof getModel>)(provider, modelId);
+	if (!model) {
+		throw new Error(`Unknown model "${modelId}" for provider "${provider}". Check --provider and --model args.`);
+	}
 
 	// Create tools
 	const tools = createMomTools(executor);
@@ -440,7 +443,17 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 			tools,
 		},
 		convertToLlm,
-		getApiKey: async () => getAnthropicApiKey(authStorage),
+		getApiKey: async () => {
+			const key = await authStorage.getApiKey(provider);
+			if (!key) {
+				throw new Error(
+					`No API key found for ${provider}.\n\n` +
+						"Set an API key environment variable, or use /login and link to auth.json from " +
+						join(homedir(), ".pi", "mom", "auth.json"),
+				);
+			}
+			return key;
+		},
 	});
 
 	// Load existing messages

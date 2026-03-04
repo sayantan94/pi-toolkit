@@ -20,6 +20,8 @@ interface ParsedArgs {
 	workingDir?: string;
 	sandbox: SandboxConfig;
 	downloadChannel?: string;
+	provider: string;
+	model: string;
 }
 
 function parseArgs(): ParsedArgs {
@@ -27,6 +29,8 @@ function parseArgs(): ParsedArgs {
 	let sandbox: SandboxConfig = { type: "host" };
 	let workingDir: string | undefined;
 	let downloadChannelId: string | undefined;
+	let provider: string | undefined;
+	let model: string | undefined;
 
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
@@ -38,6 +42,14 @@ function parseArgs(): ParsedArgs {
 			downloadChannelId = arg.slice("--download=".length);
 		} else if (arg === "--download") {
 			downloadChannelId = args[++i];
+		} else if (arg.startsWith("--provider=")) {
+			provider = arg.slice("--provider=".length);
+		} else if (arg === "--provider") {
+			provider = args[++i];
+		} else if (arg.startsWith("--model=")) {
+			model = arg.slice("--model=".length);
+		} else if (arg === "--model") {
+			model = args[++i];
 		} else if (!arg.startsWith("-")) {
 			workingDir = arg;
 		}
@@ -47,6 +59,8 @@ function parseArgs(): ParsedArgs {
 		workingDir: workingDir ? resolve(workingDir) : undefined,
 		sandbox,
 		downloadChannel: downloadChannelId,
+		provider: provider || process.env.MOM_PROVIDER || "anthropic",
+		model: model || process.env.MOM_MODEL || "claude-sonnet-4-5",
 	};
 }
 
@@ -98,7 +112,7 @@ function getState(channelId: string): ChannelState {
 		const channelDir = join(workingDir, channelId);
 		state = {
 			running: false,
-			runner: getOrCreateRunner(sandbox, channelId, channelDir),
+			runner: getOrCreateRunner(sandbox, channelId, channelDir, parsedArgs.provider, parsedArgs.model),
 			store: new ChannelStore({ workingDir, botToken: MOM_SLACK_BOT_TOKEN! }),
 			stopRequested: false,
 		};
