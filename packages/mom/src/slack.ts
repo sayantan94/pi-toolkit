@@ -130,6 +130,8 @@ export class SlackBot {
 	private store: ChannelStore;
 	private botUserId: string | null = null;
 	private startupTs: string | null = null; // Messages older than this are just logged, not processed
+	private skipBackfill: boolean;
+	private channelFilter?: string[];
 
 	private users = new Map<string, SlackUser>();
 	private channels = new Map<string, SlackChannel>();
@@ -137,11 +139,20 @@ export class SlackBot {
 
 	constructor(
 		handler: MomHandler,
-		config: { appToken: string; botToken: string; workingDir: string; store: ChannelStore },
+		config: {
+			appToken: string;
+			botToken: string;
+			workingDir: string;
+			store: ChannelStore;
+			skipBackfill?: boolean;
+			channelFilter?: string[];
+		},
 	) {
 		this.handler = handler;
 		this.workingDir = config.workingDir;
 		this.store = config.store;
+		this.skipBackfill = config.skipBackfill || false;
+		this.channelFilter = config.channelFilter;
 		this.socketClient = new SocketModeClient({ appToken: config.appToken });
 		this.webClient = new WebClient(config.botToken);
 	}
@@ -153,14 +164,45 @@ export class SlackBot {
 	async start(): Promise<void> {
 		const auth = await this.webClient.auth.test();
 		this.botUserId = auth.user_id as string;
+		log.logInfo(`Bot user ID: ${this.botUserId}`);
 
-		await Promise.all([this.fetchUsers(), this.fetchChannels()]);
-		log.logInfo(`Loaded ${this.channels.size} channels, ${this.users.size} users`);
+		if (this.channelFilter) {
+			// Skip fetching all channels, just use the filter
+			for (const channelId of this.channelFilter) {
+				this.channels.set(channelId, { id: channelId, name: channelId });
+			}
+			log.logInfo(`Using ${this.channels.size} filtered channels`);
+		} else {
+			await this.fetchChannels();
+			log.logInfo(`Loaded ${this.channels.size} channels`);
+		}
 
-		await this.backfillAllChannels();
+		if (!this.skipBackfill) {
+			await this.backfillAllChannels();
+		}
 
 		this.setupEventHandlers();
+
+		// Add socket mode debug logging - listen to EVERYTHING
+		this.socketClient.on("error", (error) => {
+			log.logWarning("Socket Mode error", String(error));
+		});
+
+		this.socketClient.on("connected", () => {
+			log.logInfo("[socket] Connected event received");
+		});
+
+		this.socketClient.on("disconnected", () => {
+			log.logWarning("[socket] Disconnected event received");
+		});
+
+		this.socketClient.on("slack_event", (payload) => {
+			log.logInfo(`[slack_event] RAW: ${JSON.stringify(payload, null, 2)}`);
+		});
+
+		log.logInfo("Starting Socket Mode client...");
 		await this.socketClient.start();
+		log.logInfo("Socket Mode client started successfully");
 
 		// Record startup time - messages older than this are just logged, not processed
 		this.startupTs = (Date.now() / 1000).toFixed(6);
@@ -280,6 +322,8 @@ export class SlackBot {
 				files?: Array<{ name: string; url_private_download?: string; url_private?: string }>;
 			};
 
+			log.logInfo(`[app_mention] Received in channel ${e.channel}: ${e.text.substring(0, 50)}`);
+
 			// Skip DMs (handled by message event)
 			if (e.channel.startsWith("D")) {
 				ack();
@@ -359,7 +403,7 @@ export class SlackBot {
 			const isDM = e.channel_type === "im";
 			const isBotMention = e.text?.includes(`<@${this.botUserId}>`);
 
-			// Skip channel @mentions - already handled by app_mention event
+			// Skip if already handled by app_mention (to avoid duplicate processing)
 			if (!isDM && isBotMention) {
 				ack();
 				return;
@@ -385,24 +429,22 @@ export class SlackBot {
 				return;
 			}
 
-			// Only trigger handler for DMs
-			if (isDM) {
-				// Check for stop command - execute immediately, don't queue!
-				if (slackEvent.text.toLowerCase().trim() === "stop") {
-					if (this.handler.isRunning(e.channel)) {
-						this.handler.handleStop(e.channel, this); // Don't await, don't queue
-					} else {
-						this.postMessage(e.channel, "_Nothing running_");
-					}
-					ack();
-					return;
-				}
-
+			// Process ALL messages (channels and DMs)
+			// Check for stop command - execute immediately, don't queue!
+			if (slackEvent.text.toLowerCase().trim() === "stop") {
 				if (this.handler.isRunning(e.channel)) {
-					this.postMessage(e.channel, "_Already working. Say `stop` to cancel._");
+					this.handler.handleStop(e.channel, this); // Don't await, don't queue
 				} else {
-					this.getQueue(e.channel).enqueue(() => this.handler.handleEvent(slackEvent, this));
+					this.postMessage(e.channel, "_Nothing running_");
 				}
+				ack();
+				return;
+			}
+
+			if (this.handler.isRunning(e.channel)) {
+				this.postMessage(e.channel, "_Already working. Say `stop` to cancel._");
+			} else {
+				this.getQueue(e.channel).enqueue(() => this.handler.handleEvent(slackEvent, this));
 			}
 
 			ack();
@@ -556,26 +598,8 @@ export class SlackBot {
 	}
 
 	// ==========================================================================
-	// Private - Fetch Users/Channels
+	// Private - Fetch Channels
 	// ==========================================================================
-
-	private async fetchUsers(): Promise<void> {
-		let cursor: string | undefined;
-		do {
-			const result = await this.webClient.users.list({ limit: 200, cursor });
-			const members = result.members as
-				| Array<{ id?: string; name?: string; real_name?: string; deleted?: boolean }>
-				| undefined;
-			if (members) {
-				for (const u of members) {
-					if (u.id && u.name && !u.deleted) {
-						this.users.set(u.id, { id: u.id, userName: u.name, displayName: u.real_name || u.name });
-					}
-				}
-			}
-			cursor = result.response_metadata?.next_cursor;
-		} while (cursor);
-	}
 
 	private async fetchChannels(): Promise<void> {
 		// Fetch public/private channels

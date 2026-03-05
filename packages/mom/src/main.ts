@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { config } from "dotenv";
 import { join, resolve } from "path";
 import { type AgentRunner, getOrCreateRunner } from "./agent.js";
 import { downloadChannel } from "./download.js";
@@ -8,6 +9,9 @@ import * as log from "./log.js";
 import { parseSandboxArg, type SandboxConfig, validateSandbox } from "./sandbox.js";
 import { type MomHandler, type SlackBot, SlackBot as SlackBotClass, type SlackEvent } from "./slack.js";
 import { ChannelStore } from "./store.js";
+
+// Load .env file
+config();
 
 // ============================================================================
 // Config
@@ -22,6 +26,8 @@ interface ParsedArgs {
 	downloadChannel?: string;
 	provider: string;
 	model: string;
+	skipBackfill: boolean;
+	channels?: string[];
 }
 
 function parseArgs(): ParsedArgs {
@@ -31,6 +37,8 @@ function parseArgs(): ParsedArgs {
 	let downloadChannelId: string | undefined;
 	let provider: string | undefined;
 	let model: string | undefined;
+	let skipBackfill = false;
+	let channels: string[] | undefined;
 
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
@@ -50,6 +58,12 @@ function parseArgs(): ParsedArgs {
 			model = arg.slice("--model=".length);
 		} else if (arg === "--model") {
 			model = args[++i];
+		} else if (arg === "--skip-backfill") {
+			skipBackfill = true;
+		} else if (arg.startsWith("--channels=")) {
+			channels = arg.slice("--channels=".length).split(",");
+		} else if (arg === "--channels") {
+			channels = args[++i]?.split(",");
 		} else if (!arg.startsWith("-")) {
 			workingDir = arg;
 		}
@@ -61,6 +75,8 @@ function parseArgs(): ParsedArgs {
 		downloadChannel: downloadChannelId,
 		provider: provider || process.env.MOM_PROVIDER || "anthropic",
 		model: model || process.env.MOM_MODEL || "claude-sonnet-4-5",
+		skipBackfill,
+		channels,
 	};
 }
 
@@ -161,7 +177,8 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 				if (messageTs) {
 					await slack.updateMessage(event.channel, messageTs, displayText);
 				} else {
-					messageTs = await slack.postMessage(event.channel, displayText);
+					// Post in thread instead of main channel
+					messageTs = await slack.postInThread(event.channel, event.ts, displayText);
 				}
 
 				if (shouldLog && messageTs) {
@@ -178,7 +195,8 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 				if (messageTs) {
 					await slack.updateMessage(event.channel, messageTs, displayText);
 				} else {
-					messageTs = await slack.postMessage(event.channel, displayText);
+					// Post in thread instead of main channel
+					messageTs = await slack.postInThread(event.channel, event.ts, displayText);
 				}
 			});
 			await updatePromise;
@@ -314,6 +332,8 @@ const bot = new SlackBotClass(handler, {
 	botToken: MOM_SLACK_BOT_TOKEN,
 	workingDir,
 	store: sharedStore,
+	skipBackfill: parsedArgs.skipBackfill,
+	channelFilter: parsedArgs.channels,
 });
 
 // Start events watcher

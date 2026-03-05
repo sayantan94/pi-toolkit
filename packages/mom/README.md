@@ -57,7 +57,61 @@ npm install @mariozechner/pi-mom
 7. Install the app to your workspace. Get the **Bot User OAuth Token**. This is `MOM_SLACK_BOT_TOKEN`
 8. Add mom to any channels where you want her to operate (she'll only see messages in channels she's added to)
 
-## Quick Start
+## Quick Start (Run Locally from Source)
+
+```bash
+# Clone the repo
+cd pi-mono
+
+# Install dependencies and build
+npm install
+npm run build
+
+# Create .env file in packages/mom/
+cd packages/mom
+cat > .env << 'EOF'
+MOM_SLACK_APP_TOKEN=xapp-...
+MOM_SLACK_BOT_TOKEN=xoxb-...
+AWS_ACCESS_KEY_ID=AKIA...
+AWS_SECRET_ACCESS_KEY=...
+AWS_REGION=us-east-1
+EOF
+
+# Create data directory
+mkdir -p ~/mom-data
+
+# Option 1: Docker sandbox (recommended, isolated)
+docker run -d \
+  --name mom-sandbox \
+  -v ~/mom-data:/workspace \
+  alpine:latest \
+  tail -f /dev/null
+
+node dist/main.js \
+  --provider=amazon-bedrock \
+  --model=global.anthropic.claude-opus-4-6-v1 \
+  --sandbox=docker:mom-sandbox \
+  --skip-backfill \
+  --channels=YOUR_CHANNEL_ID \
+  ~/mom-data
+
+# Option 2: Host mode (direct access to your machine)
+node dist/main.js \
+  --provider=amazon-bedrock \
+  --model=global.anthropic.claude-opus-4-6-v1 \
+  --sandbox=host \
+  --skip-backfill \
+  --channels=YOUR_CHANNEL_ID \
+  ~/mom-data
+
+# Or use the daemon script (edit mom-daemon.sh to choose sandbox mode)
+chmod +x mom-daemon.sh
+./mom-daemon.sh start
+./mom-daemon.sh status
+./mom-daemon.sh logs
+```
+
+## Quick Start (Install from npm)
 
 ```bash
 # Set environment variables
